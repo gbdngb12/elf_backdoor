@@ -89,18 +89,46 @@ puts:
 
 ;; long thread_create(void (*)(void))
 thread_create:
-    ;                           $rdi                      $rsi           
-    ; int clone(unsigned long clone_flags, unsigned long newsp/*child stack*/
-    ;                       $rdx              $r10                $r8
-    ;           , void *parent_tid, void *child_tid, unsigned int tid);
-    ;
+    ;                          $rdi             $rsi           
+	; long clone(unsigned long flags, void *child_stack,
+	;			  $rdx        $r10					$r8
+    ;       void *ptid, void *ctid, struct pt_regs *regs);
+	; pointer is always indicate Low Address
+    ;  ┌────────────────┐            
+	;  │ 32	 33	 34	 35 │
+	;  │ 28	 29	 30	 31 │
+	;  │ 24	 25	 26	 27 │
+	;  │ 20	 21	 22	 23 │
+	;  │ 16	 17	 18	 19 │
+	;  │ 12	 13	 14	 15 │
+	;  │ 8   9	 10	 11 │
+	;  │ 4   5   6   7  │
+	;  │ 0 	 1	 2	 3  │
+	;  └────────────────┘
+	;
+	;				 
+	;            				 ┌────────────────┐						       
+	;         Main Thread rsp--> │    original    │	                           Main Thread ret -> original return Address
+	;      	  					 │ return Address │			
+	;      		 				 ┈ ┈ ┈ ┈ ┈ ┈ ┈ 						      
+	;            				 │    thread_fn   │          sys_clone()  
+	;            				 │     Address    │                       
+	;      		 				 ┈ ┈ ┈ ┈ ┈ ┈ ┈ 						     
+	;    		 				 │................│                     
+	;         New Thread rsp-->  │    thread_fn   │						      New Thread ret -> thread_fn Address
+	;     Stack Size = 12        │     Address    │		 				 
+	; $rax(End Point Address)--> │ 8   9   10  11 │					     
+	;         				     │ 4   5   6   7  │                      
+	;         				     │ 0   1   2   3  │                      
+	;         				     └────────────────┘                            
+
 	push rdi ;thread_fn
 	call stack_create
 	lea rsi, [rax + STACK_SIZE - 8] ;thread function Pointer
 	pop qword [rsi] ; thread function Pointer->thread_fn
-	mov rdi, THREAD_FLAGS
+	mov rdi, THREAD_FLAGS ; flags
 	mov rax, SYS_clone
-	syscall
+	syscall ;여기서 thread 생성되며 실행이 계속됨
 	ret
 
 ;; void *stack_create(void)
