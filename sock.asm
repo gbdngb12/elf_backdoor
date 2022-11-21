@@ -25,7 +25,7 @@ _start:
     
     ; if(socket == -1)
     cmp eax, -1
-    je _sockFailed
+    jle _sockFailed
     mov dword[rbp + socket.socketfd], eax
 
     ; their_addr.sin_family = AF_INET;   /* host byte order */
@@ -50,7 +50,7 @@ _start:
     mov rax, SYS_CONNECT ; connect
     syscall ; connect(sockfd, addr, 16);
     cmp eax, -1
-    je _connectFailed
+    jle _connectFailed
 
 _loop:
     ;                      $rdi        $rsi        $rdx      $r10    
