@@ -9,7 +9,7 @@ section .text
 _start:
     push rbp
     mov rbp, rsp
-    sub rsp, 0x15c ; 348 byte Stack
+    sub rsp, 0x16c ; 364 byte Stack
 
     ;               $rdi       $rsi      $rdx
     ;int socket(int domain, int type, int protocol);
@@ -146,32 +146,32 @@ AF_INET equ 2
 AF_INET equ 2
 
 ; Data Structure
-struc sockaddr_in, -0x10 ;16 end Offset
+struc sockaddr_in, -0x10 ;16 Last Size + Current Size
     .sin_family:    resb 2  ;2bytes
     .sin_port:      resb 2  ;2bytes
     .sin_addr:      resb 4  ;4bytes
     .sin_zero:      resb 8  ;8bytes
 endstruc
 
-struc pid, -0x14 ;end Offset
+struc pid, -0x14 ;20 Last Size + Current Size
     .pid resb 4 ;4bytes
 endstruc
 
-struc socket, -0x70 ;end Offset
-    .socketfd:       resb 4
-    .len:            resb 4
-    .buf:            resb MAXDATASIZE ; buf
+struc socket, -0x80 ;128 Last Size + Current Size
+    .socketfd:       resb 4 ;4bytes
+    .len:            resb 4 ;4btres
+    .buf:            resb MAXDATASIZE ;100bytes buf
 endstruc
 
-struc commandOutput, -0xd4 ;end Offset
-    .commandOutput:  resb MAXDATASIZE
+struc commandOutput, -0xe4 ;228 Last Size + Current Size
+    .commandOutput:  resb MAXDATASIZE ;100bytes commandOutput
 endstruc
 
-struc siginfo_t, -0x154 ;end Offset
+struc siginfo_t, -0x164 ;356 Last Size + Current Size
     .siginfo: resb 128 ; 128bytes
 endstruc
 
-struc pipefd, -0x15c ;end Offset
+struc pipefd, -0x16c ;364 Last Size + Current Size
     .read: resb 4 ;4bytes
     .write: resb 4 ;4bytes
 endstruc
