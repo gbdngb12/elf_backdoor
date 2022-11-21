@@ -23,6 +23,7 @@ while True:
     
     if inputData == "close" :
         child.close()
+        exit(0)
     child.send(inputData.encode('utf-8'))
     
     data = child.recv(65565)
