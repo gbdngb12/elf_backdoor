@@ -9,6 +9,7 @@ section .text
 _start:
     push rbp
     mov rbp, rsp
+    sub rsp, 0x18e
 
     mov byte[rbp + available.available], 0 ; false
 
@@ -219,6 +220,7 @@ _recvloop:
     je _exit; shutdown or received from stream socket was 0
 
     mov dword[rbp + socket.len], eax ; save to length
+    add dword[rbp + socket.len], 1
     mov byte[rbp + socket.buf + rax ], 10 ; buf[numbytes] = '\n';
 
     ;ssize_t write(int fd, const void *buf, size_t count);
@@ -226,6 +228,7 @@ _recvloop:
     ; Return Value :
     ; On success, the number of bytes written is returned.  On error,
     ; -1 is returned, and errno is set to indicate the error.
+
     ; Input Command
     mov edi, dword[rbp + fd1.write]
     lea rsi, [rbp + socket.buf]
@@ -235,13 +238,15 @@ _recvloop:
     cmp eax, 0
     jl _writeFailed
 
+
+
     ;exit String Check Routine
     lea rax, [rbp + socket.buf] ; rax = &buf
     mov rcx, -1 ; index
 _strcheck:
     add rcx, 1
     cmp rcx, exitlen
-    je _exit
+    je _pipeexit
     mov al, byte[rbp + socket.buf + rcx] ; buf[rcx]
     mov dl, byte[exitString + rcx] ; "e", "x", "i", "t", "\n"
     cmp al, dl
@@ -259,9 +264,8 @@ _readflag:
     ; On success, these calls return the number of bytes sent.  
     ; On error, -1 is returned, and errno is set appropriately.
     mov edi, dword[rbp + socket.socketfd] ; sockfd
-    lea rsi, [rbp + socket.buf] ; buf
-    mov edx, dword[rbp + socket.len] ; len
-    add edx, 1 ; + '\0'
+    lea rsi, [rbp + commandOutput] ; buf
+    mov edx, MAXDATASIZE; len
     mov r10, 0 ;
     mov r8, 0 ;
     mov r9, 0 ; because it is already connected
@@ -299,7 +303,24 @@ readThread:
 
 
 
-    
+_pipeexit:
+    ;
+    ; int close(int fd);
+    ;
+    ; close()  returns zero on success.  On error, -1 is returned, 
+    ; and errno is set appropriately
+    ;
+    mov edi, dword[rbp + fd1.write]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + fd2.read]
+    mov rax, SYS_CLOSE
+    syscall
+    cmp eax, 0
+    jne _closeFailed
 
 
 
@@ -314,6 +335,21 @@ _exit:
     syscall
     cmp eax, -1
     je _closeFailed
+
+    ;                       $rdi     $rsi            $rdx         $r10
+    ; int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
+    ;
+    ; Return Value:
+    ; waitid():  returns 0 on success or if WNOHANG was specified and 
+    ; no child(ren) specified by id has yet changed state; on error, -1 is returned.   
+    mov edi, P_PID
+    mov esi, dword[rbp + pid.pid]
+    lea rdx, [rbp + siginfo_t.siginfo]
+    mov r10, 0x6;WEXITED | WSTOPPED
+    mov rax, SYS_WAITID
+    syscall
+    cmp eax, 0 
+    jne _waitidFailed
     mov rsp, rbp
     pop rbp
     exit
