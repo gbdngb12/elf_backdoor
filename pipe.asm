@@ -9,6 +9,9 @@ section .text
 _start:
     push rbp
     mov rbp, rsp
+
+    mov byte[rbp + available.available], 0 ; false
+
     ;               $rdi       $rsi      $rdx
     ;int socket(int domain, int type, int protocol);
     ;   
@@ -185,6 +188,8 @@ _parent:
     syscall
     cmp eax, 0
     jne _closeFailed
+
+_recvloop:
     ;                      $rdi        $rsi        $rdx      $r10    
     ;ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
     ;                                     $r8                 $r9
@@ -214,8 +219,19 @@ _parent:
     mov dword[rbp + socket.len], eax ; save to length
     mov byte[rbp + socket.buf + rax ], 10 ; buf[numbytes] = '\n';
 
-    ;Input Command
-    
+    ;ssize_t write(int fd, const void *buf, size_t count);
+    ;
+    ; Return Value :
+    ; On success, the number of bytes written is returned.  On error,
+    ; -1 is returned, and errno is set to indicate the error.
+    ; Input Command
+    mov edi, dword[rbp + fd1.write]
+    lea rsi, [rbp + socket.buf]
+    mov edx, dword[rbp +socket.len] ;length
+    mov rax, SYS_WRITE ;write
+    syscall
+    cmp eax, 0
+    jl _writeFailed
 
     ;exit String Check Routine
     lea rax, [rbp + socket.buf] ; rax = &buf
@@ -229,9 +245,10 @@ _strcheck:
     cmp al, dl
     je _strcheck
 
-
-
-
+_readflag:
+    mov al, byte[rbp + available.available] ; read flag
+    cmp al, 0
+    je _readflag
     ;                   $rdi               $rsi         $rdx      $r10
     ;ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
     ;                                           $r8                    $r9
@@ -250,9 +267,37 @@ _strcheck:
     syscall
     cmp eax, -1
     je _sendtoFailed
+    mov byte[rbp + available.available], 0
+    jmp _recvloop
 
 
 
+
+
+readThread:
+    ;ssize_t read(int fd, void *buf, size_t count);
+    ;
+    ; On  success, the number of bytes read is returned (zero indicates end of file), and the
+    ;   file position is advanced by this number.  It is not an error if this number is smaller
+    ;   than the number of bytes requested; this may happen for example because fewer bytes are
+    ;   actually available right now (maybe because we were close to end-of-file, or because we
+    ;   are  reading  from  a pipe, or from a terminal), or because read() was interrupted by a
+    ;   signal.  See also NOTES.
+    ;   On error, -1 is returned, and errno is set appropriately.  In this case, it is left un‐
+    ;   specified whether the file position (if any) changes.
+    mov edi, dword[rbp + fd2.read]
+    lea rsi, [rbp + commandOutput]
+    mov rdx, MAXDATASIZE
+    mov rax, SYS_READ
+    syscall
+    cmp eax, 0
+    jl _readFailed
+    mov byte[rbp + available.available], 1
+    jmp readThread 
+
+
+
+    
 
 
 
@@ -447,6 +492,18 @@ _dup2Failed:
     pop rbp
     exit
 
+_readFailed:
+    print readError
+    mov rsp, rbp
+    pop rbp
+    exit
+
+_writeFailed:
+    print writeError
+    mov rsp, rbp
+    pop rbp
+    exit
+
 ; Error Message
 socketError: db "Socket Error",33,10,0
 closeError: db "close Error",33,10,0
@@ -457,6 +514,8 @@ pipeError: db "pipe Error",33,10,0
 forkError: db "fork Error",33,10,0
 waitidError: db "waitid Error",33,10,0
 dup2Error: db "dup Error",33,10,0
+writeError: db "write Error",33,10,0
+readError: db "read Error",33,10,0
 
 
 ;--------------------------------Error Handling Routine-----------------------------
