@@ -188,6 +188,8 @@ _parent:
     syscall
     cmp eax, 0
     jne _closeFailed
+    mov rdi, readThread
+    call thread_create
 
 _recvloop:
     ;                      $rdi        $rsi        $rdx      $r10    
