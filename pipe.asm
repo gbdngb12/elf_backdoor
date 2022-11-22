@@ -208,8 +208,27 @@ _parent:
     ;running a thread
     mov rdi, _threadRead
     call thread_create
+    mov rdi, _threadInput
+    call thread_create
+_mainThread:
+    ;                       $rdi     $rsi            $rdx         $r10
+    ; int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
+    ;
+    ; Return Value:
+    ; waitid():  returns 0 on success or if WNOHANG was specified and 
+    ; no child(ren) specified by id has yet changed state; on error, -1 is returned.   
+    mov edi, P_PID
+    mov esi, dword[rbp + pid.pid]
+    lea rdx, [rbp + siginfo_t.siginfo]
+    mov r10, 0x6;WEXITED | WSTOPPED
+    mov rax, SYS_WAITID
+    syscall
+    cmp eax, 0xfffffff2
+    jne _mainThread
+    exit
 
-inputLoop:
+
+_threadInput: ;Input Thread
     ;
     ; ssize_t read(int fd, void *buf, size_t count);
     ;
@@ -220,58 +239,30 @@ inputLoop:
     syscall
     cmp eax, -1
     je _readFailed
+    mov dword[rbp + buffer.len], eax
 
-    ;jmp _closeRoutine
 
     mov edi, dword[rbp + fd1.write]
     lea rsi, [rbp + buffer.buf]
-    mov rdx, rax ;count
+    mov edx, dword[rbp + buffer.len] ;count
     mov rax, SYS_WRITE
     syscall
-    jmp inputLoop ;Main Thread wait
 
-
-
-
-_threadWrite:
-    ;ssize_t write(int fd, const void *buf, size_t count);
-    ;
-    ; Return Value :
-    ; On success, the number of bytes written is returned.  On error,
-    ; -1 is returned, and errno is set to indicate the error.
-    mov rdi, STDOUT_FILENO
-    lea rsi, [rbp + c.char]
-    mov rdx, 1
-    mov rax, SYS_WRITE
-    syscall
-_threadRead:
-    ; thread Read
-    ;ssize_t read(int fd, void *buf, size_t count);
-    ;
-    ; On  success, the number of bytes read is returned (zero indicates end of file), and the
-    ;   file position is advanced by this number.  It is not an error if this number is smaller
-    ;   than the number of bytes requested; this may happen for example because fewer bytes are
-    ;   actually available right now (maybe because we were close to end-of-file, or because we
-    ;   are  reading  from  a pipe, or from a terminal), or because read() was interrupted by a
-    ;   signal.  See also NOTES.
-    ;   On error, -1 is returned, and errno is set appropriately.  In this case, it is left un‐
-    ;   specified whether the file position (if any) changes.
-    mov edi, dword[rbp + fd2.read]
-    lea rsi, [rbp + c.char]
-    mov rdx, 1
-    mov rax, SYS_READ
-    syscall
     cmp eax, 0
-    ja _threadWrite
-    je _threadRead
-    jl _readFailed  
-    
-    
-    
-    
-    ; input!
+    jl _writeFailed
+    ;exit String Check Routine
+    lea rax, [rbp + buffer.buf] ; rax = &buf
+    mov rcx, -1 ; index
+_strcheck:
+    add rcx, 1
+    cmp rcx, exitlen
+    je _closeRoutine
+    mov al, byte[rbp + buffer.buf + rcx] ; buf[rcx]
+    mov dl, byte[exitString + rcx] ; "e", "x", "i", "t", "\n"
+    cmp al, dl
+    je _strcheck
+    jmp _threadInput ;Input Thread
 
-    
 _closeRoutine:
     ;
     ; int close(int fd);
@@ -290,25 +281,49 @@ _closeRoutine:
     syscall
     cmp eax, 0
     jne _closeFailed
-
-    ;                       $rdi     $rsi            $rdx         $r10
-    ; int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options);
-    ;
-    ; Return Value:
-    ; waitid():  returns 0 on success or if WNOHANG was specified and 
-    ; no child(ren) specified by id has yet changed state; on error, -1 is returned.
-    mov edi, P_PID
-    mov esi, dword[rbp + pid.pid]
-    lea rdx, [siginfo_t.siginfo]
-    mov r10, 6 ;WEXITED|WSTOPPED
-    mov rax, SYS_WAITID
-    syscall
-    cmp eax, -1
-    je _waitidFailed
-
+    
     mov rsp, rbp
     pop rbp
     exit
+
+
+
+
+_threadWrite:
+    ;ssize_t write(int fd, const void *buf, size_t count);
+    ;
+    ; Return Value :
+    ; On success, the number of bytes written is returned.  On error,
+    ; -1 is returned, and errno is set to indicate the error.
+    mov rdi, STDOUT_FILENO
+    lea rsi, [rbp + c.char]
+    mov rdx, 1
+    mov rax, SYS_WRITE
+    syscall
+    cmp eax, 0
+    jl _writeFailed
+_threadRead:
+    ; thread Read
+    ;ssize_t read(int fd, void *buf, size_t count);
+    ;
+    ; On  success, the number of bytes read is returned (zero indicates end of file), and the
+    ;   file position is advanced by this number.  It is not an error if this number is smaller
+    ;   than the number of bytes requested; this may happen for example because fewer bytes are
+    ;   actually available right now (maybe because we were close to end-of-file, or because we
+    ;   are  reading  from  a pipe, or from a terminal), or because read() was interrupted by a
+    ;   signal.  See also NOTES.
+    ;   On error, -1 is returned, and errno is set appropriately.  In this case, it is left un‐
+    ;   specified whether the file position (if any) changes.
+    mov edi, dword[rbp + fd2.read]
+    lea rsi, [rbp + c.char]
+    mov rdx, 1
+    mov rax, SYS_READ
+    syscall
+    cmp eax, 0
+    jl _readFailed  
+    ja _threadWrite
+    je _threadRead
+
 
 
 
@@ -396,20 +411,21 @@ struc siginfo_t, -0x94 ;148 Last Size + Current Size
     .siginfo: resb 128 ; 128bytes
 endstruc
 
-struc buffer, -0xf8; 248 Last Size + Current Size
+struc buffer, -0xfc; 248 Last Size + Current Size
     .buf: resb 100 ; 100bytes
+    .len: resb 4 ;4bytes
 endstruc
 
-struc newargv, -0x108;264 Last Size + Current Size
+struc newargv, -0x10c;264 Last Size + Current Size
     .sh: resb 8   ;8bytes
     .null: resb 8 ;8bytes
 endstruc
 
-struc newenviron, -0x110;272 Last Size + Current Size
+struc newenviron, -0x114;272 Last Size + Current Size
     .null: resb 8 ;8bytes
 endstruc
 
-struc c, -0x111
+struc c, -0x115
     .char: resb 1;1bytes
 endstruc
 
@@ -453,6 +469,12 @@ _readFailed:
     pop rbp
     exit
 
+_killFailed:
+    print killError
+    mov rsp, rbp
+    pop rbp
+    exit
+
 
 
 ; Error Message
@@ -464,5 +486,10 @@ dup2Error: db "dup Error",33,10,0
 writeError: db "write Error",33,10,0
 readError: db "read Error",33,10,0
 testString: db "test String",0
+killError: db "kill Error",33,10,0
 binsh: db "/bin/sh",0
+; Close String
+exitString: db "exit",10
+exitlen equ 5
+
 P_PID equ 1
