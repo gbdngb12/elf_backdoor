@@ -191,6 +191,9 @@ _parent:
     jne _closeFailed
     mov rdi, readThread
     call thread_create
+    mov rdi, _recvloop
+    call thread_create
+    jmp _mainThread
 
 _recvloop:
     ;                      $rdi        $rsi        $rdx      $r10    
@@ -238,8 +241,6 @@ _recvloop:
     cmp eax, 0
     jl _writeFailed
 
-
-
     ;exit String Check Routine
     lea rax, [rbp + socket.buf] ; rax = &buf
     mov rcx, -1 ; index
@@ -251,7 +252,9 @@ _strcheck:
     mov dl, byte[exitString + rcx] ; "e", "x", "i", "t", "\n"
     cmp al, dl
     je _strcheck
+    jmp _recvloop
 
+_mainThread:
 _readflag:
     mov al, byte[rbp + available.available] ; read flag
     cmp al, 0
@@ -274,7 +277,13 @@ _readflag:
     cmp eax, -1
     je _sendtoFailed
     mov byte[rbp + available.available], 0
-    jmp _recvloop
+    mov rcx, -1
+_zero:
+    add rcx, 1
+    cmp rcx, MAXDATASIZE
+    je _readflag
+    mov byte[rbp + commandOutput + rcx], 0
+    jmp _zero
 
 
 
