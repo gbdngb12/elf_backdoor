@@ -33,8 +33,8 @@ int main(void) {
         // fd1[0]을 남겨두고 fd1[1]을 닫느다. 또한 부모 프로세스로 데이터를 보내는데
         // 사용할 fd2[1]을 남겨두고 fd2[0]을 닫느다.
         case 0: /* child */
-            close(fd1[1]);
-            close(fd2[0]);
+            close(fd1[1]); //close write
+            close(fd2[0]); //close read
 
             if (fd2[1] != STDOUT_FILENO) {  //표준출력 -> fd2[1](write)
                 dup2(fd2[1], STDOUT_FILENO);

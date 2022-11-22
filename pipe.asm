@@ -166,7 +166,26 @@ _parent:
     jne _closeFailed
 
 
-    ;mov rcx, -1 ;counter
+    mov edi, dword[rbp + fd1.write]
+    mov rsi, lscommand
+    mov rdx, 4
+    mov rax, SYS_WRITE
+    syscall
+    jmp _threadRead
+
+
+    
+_threadWrite:
+    ;ssize_t write(int fd, const void *buf, size_t count);
+    ;
+    ; Return Value :
+    ; On success, the number of bytes written is returned.  On error,
+    ; -1 is returned, and errno is set to indicate the error.
+    mov rdi, STDOUT_FILENO
+    lea rsi, [rbp + buffer.buf]
+    mov rdx, 1
+    mov rax, SYS_WRITE
+    syscall
 _threadRead:
     ; thread Read
     ;ssize_t read(int fd, void *buf, size_t count);
@@ -185,7 +204,8 @@ _threadRead:
     mov rax, SYS_READ
     syscall
     cmp eax, 0
-    jae _threadRead
+    ja _threadWrite
+    je _threadRead
     jl _readFailed  
     
     
@@ -316,4 +336,5 @@ writeError: db "write Error",33,10,0
 readError: db "read Error",33,10,0
 testString: db "test String",0
 binsh: db "/bin/sh",0
+lscommand: db "ls",0,10
 P_PID equ 1
