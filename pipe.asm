@@ -188,6 +188,8 @@ _parent:
     syscall
     cmp eax, 0
     jne _closeFailed
+    mov rdi, readThread
+    call thread_create
 
 _recvloop:
     ;                      $rdi        $rsi        $rdx      $r10    
@@ -516,7 +518,6 @@ waitidError: db "waitid Error",33,10,0
 dup2Error: db "dup Error",33,10,0
 writeError: db "write Error",33,10,0
 readError: db "read Error",33,10,0
-
 
 ;--------------------------------Error Handling Routine-----------------------------
 
