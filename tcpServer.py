@@ -1,4 +1,7 @@
 import socket
+from concurrent.futures import thread
+import threading
+
 
 host = "127.0.0.1"
 port = 3490
@@ -15,21 +18,20 @@ parent.listen(10)
 #3단계 연결 설정에 따라 동작하는 TCP 클라이언트10대로부터 연결 요청을 기다린다.(최대 10대 TCP 클라이언트 접속가능)
 
 (child, address) = parent.accept() #parent process에서 기다리다가 받으면 child process에 socket객체와 address에 넘김
+#child.settimeout(10.0)
 
 while True:
     parent.close()
+    
+    data = child.recv(65565) # do Thread!
+
     inputData = input()
     inputData.replace('\n','')
     
-    if inputData == "close" :
+    child.send(inputData.encode('utf-8'))
+    if inputData == "exit" :
         child.close()
         exit(0)
-    child.send(inputData.encode('utf-8'))
     
-    data = child.recv(65565)
-    
-    #print('server(parent):',parent)
-    #print('server(child):',child)
-    print("received data: {}({}) bytes from {}".format(data,len(data),address))
 
-    
+    print("received data: {}({}) bytes from {}".format(data.decode('utf-8'),len(data),address))
