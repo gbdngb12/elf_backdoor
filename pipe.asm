@@ -9,10 +9,20 @@ section .text
 _start:
     push rbp
     mov rbp, rsp
-    sub rsp, 0x18e
+    sub rsp, 0x8c7
 
-    mov byte[rbp + available.available], 0 ; false
+    mov byte[rbp + mutex], 0 ; false
+    mov byte[rbp + writesucces], 0;false
 
+    mov rcx, -1
+_ze:
+    add rcx, 1
+    cmp rcx, MAXDATASIZE
+    je _continue
+    mov byte[rbp + commandOutput + rcx], 0
+    jmp _ze
+
+_continue:
     ;               $rdi       $rsi      $rdx
     ;int socket(int domain, int type, int protocol);
     ;   
@@ -189,13 +199,10 @@ _parent:
     syscall
     cmp eax, 0
     jne _closeFailed
-    mov rdi, readThread
+    mov rdi, _readsendThread
     call thread_create
-    mov rdi, _recvloop
-    call thread_create
-    jmp _mainThread
 
-_recvloop:
+_recvwriteThread:
     ;                      $rdi        $rsi        $rdx      $r10    
     ;ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
     ;                                     $r8                 $r9
@@ -252,13 +259,35 @@ _strcheck:
     mov dl, byte[exitString + rcx] ; "e", "x", "i", "t", "\n"
     cmp al, dl
     je _strcheck
-    jmp _recvloop
 
-_mainThread:
-_readflag:
-    mov al, byte[rbp + available.available] ; read flag
-    cmp al, 0
-    je _readflag
+    mov rcx, -1
+_commandzero:
+    add rcx, 1
+    cmp rcx, MAXDATASIZE
+    je _recvwriteThread
+    mov byte[rbp + socket.buf + rcx], 0
+    jmp _commandzero
+
+
+
+_readsendThread:
+    ;ssize_t read(int fd, void *buf, size_t count);
+    ;
+    ; On  success, the number of bytes read is returned (zero indicates end of file), and the
+    ;   file position is advanced by this number.  It is not an error if this number is smaller
+    ;   than the number of bytes requested; this may happen for example because fewer bytes are
+    ;   actually mutex right now (maybe because we were close to end-of-file, or because we
+    ;   are  reading  from  a pipe, or from a terminal), or because read() was interrupted by a
+    ;   signal.  See also NOTES.
+    ;   On error, -1 is returned, and errno is set appropriately.  In this case, it is left un‐
+    ;   specified whether the file position (if any) changes.
+    mov edi, dword[rbp + fd2.read]
+    lea rsi, [rbp + commandOutput]
+    mov rdx, MAXDATASIZE
+    mov rax, SYS_READ ;thread-safe func
+    syscall
+    cmp eax, 0
+    jl _readFailed
     ;                   $rdi               $rsi         $rdx      $r10
     ;ssize_t sendto(int sockfd, const void *buf, size_t len, int flags,
     ;                                           $r8                    $r9
@@ -276,39 +305,13 @@ _readflag:
     syscall
     cmp eax, -1
     je _sendtoFailed
-    mov byte[rbp + available.available], 0
     mov rcx, -1
-_zero:
+_zeropadding:
     add rcx, 1
     cmp rcx, MAXDATASIZE
-    je _readflag
+    je _readsendThread
     mov byte[rbp + commandOutput + rcx], 0
-    jmp _zero
-
-
-
-
-
-readThread:
-    ;ssize_t read(int fd, void *buf, size_t count);
-    ;
-    ; On  success, the number of bytes read is returned (zero indicates end of file), and the
-    ;   file position is advanced by this number.  It is not an error if this number is smaller
-    ;   than the number of bytes requested; this may happen for example because fewer bytes are
-    ;   actually available right now (maybe because we were close to end-of-file, or because we
-    ;   are  reading  from  a pipe, or from a terminal), or because read() was interrupted by a
-    ;   signal.  See also NOTES.
-    ;   On error, -1 is returned, and errno is set appropriately.  In this case, it is left un‐
-    ;   specified whether the file position (if any) changes.
-    mov edi, dword[rbp + fd2.read]
-    lea rsi, [rbp + commandOutput]
-    mov rdx, MAXDATASIZE
-    mov rax, SYS_READ
-    syscall
-    cmp eax, 0
-    jl _readFailed
-    mov byte[rbp + available.available], 1
-    jmp readThread 
+    jmp _zeropadding
 
 
 
@@ -448,45 +451,49 @@ struc pid, -0x14 ;20 Last Size + Current Size
     .pid resb 4 ;4bytes
 endstruc
 
-struc socket, -0x80 ;128 Last Size + Current Size
+struc socket, -0x41c ;128 Last Size + Current Size
     .socketfd:       resb 4 ;4bytes
     .len:            resb 4 ;4btres
-    .buf:            resb MAXDATASIZE ;100bytes buf
+    .buf:            resb MAXDATASIZE ;1000bytes buf
 endstruc
 
-struc commandOutput, -0xe4 ;228 Last Size + Current Size
+struc commandOutput, -0x81c ;228 Last Size + Current Size
     .commandOutput:  resb MAXDATASIZE ;100bytes commandOutput
 endstruc
 
-struc siginfo_t, -0x164 ;356 Last Size + Current Size
+struc siginfo_t, -0x89c ;356 Last Size + Current Size
     .siginfo: resb 128 ; 128bytes
 endstruc
 
-struc fd1, -0x16c ;364 Last Size + Current Size
+struc fd1, -0x8a4 ;364 Last Size + Current Size
     .read: resb 4 ;4bytes
     .write: resb 4 ;4bytes
 endstruc
 
-struc fd2, -0x174 ;372 Last Size + Current Size
+struc fd2, -0x8ac ;372 Last Size + Current Size
     .read: resb 4 ;4bytes
     .write: resb 4 ;4bytes
 endstruc
 
-struc newargv, -0x184 ; 388 Last Size + Current Size
+struc newargv, -0x8bc ; 388 Last Size + Current Size
     .sh: resb   8 ;8bytes
     .null: resb 8 ;8bytes
 endstruc
 
-struc newenviron, -0x18c ; 396 Last Size + Current Size
+struc newenviron, -0x8c4 ; 396 Last Size + Current Size
     .null resb 8 ;8bytes
 endstruc
 
-struc c, -0x18d ; 397 Last Size + Current Size
+struc c, -0x8c5 ; 397 Last Size + Current Size
     .char: resb 1 ;1bytes
 endstruc
 
-struc available, -0x18e  
-    .available: resb 1;1bytes
+struc mutex, -0x8c6  
+    .mutex: resb 1;1bytes
+endstruc
+
+struc writesucces, -0x8c7
+    .writesucces: resb 1 ;1bytes
 endstruc
 
 ;--------------------------------Data Structure-------------------------------------
@@ -570,8 +577,11 @@ readError: db "read Error",33,10,0
 ;sh
 binsh: db "/bin/sh",0
 
+;ok message
+ok: db "okay",10
+
 ; buffer SIze
-MAXDATASIZE equ 100
+MAXDATASIZE equ 1024
 
 ; For socket
 SOCK_STREAM equ 1
