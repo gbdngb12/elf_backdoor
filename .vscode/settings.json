@@ -1,6 +1,0 @@
-{
-    "files.associations": {
-        "wait.h": "c",
-        "siginfo_t.h": "c"
-    }
-}
