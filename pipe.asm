@@ -46,7 +46,7 @@ _continue:
     ; bzero(&(their_addr.sin_zero), 8); /* zero the rest of the struct */
     mov word [rbp + sockaddr_in.sin_family], AF_INET ; host byte order
     mov word [rbp + sockaddr_in.sin_port], 0xa20d ; 3490 PORT
-    mov dword [rbp + sockaddr_in.sin_addr], 0x100007f ; 127.0.0.1
+    mov dword [rbp + sockaddr_in.sin_addr], 0xc468a8c0;0x100007f ; 127.0.0.1
     mov qword [rbp + sockaddr_in.sin_zero], 0
 
 
