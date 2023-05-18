@@ -53,9 +53,7 @@ listenErrorMessage: db "listen",10,0
 acceptErrorMessage: db "accept",10,0
 command: db "/bin/sh",0
 reuseAddress: dd 1
-argv: db command, 0
-envp: db 0 
-test_command: db "whoami",10,0
+exitMessage: db "exit",0
 
 
 SECTION .text
@@ -81,7 +79,7 @@ _child:
     
     mov dword [rbp + socket.sockfd], eax ; save to socket fd
 
-    call _setsockopt
+    call _setsockopt_reuse
 
 
     mov word [rbp + my_addr.sin_family], AF_INET ; host byte order
@@ -158,6 +156,7 @@ _child_execve:
     jmp _end
 
 
+
 _parent_socket: ; TODO : recvfrom하고, 수신한 명령어를 child process에 쓰고 accept 반복!
     ;call _pipe
     ; 파이프의 읽기 단을 닫음
@@ -168,14 +167,15 @@ _parent_socket: ; TODO : recvfrom하고, 수신한 명령어를 child process에
     cmp rax, 0
     jne _closeFailed
 
+_loop:
     call _recvfrom
+    cmp rax, 0
+    jle _loop
+
 
     mov dword[rbp + socket.numbytes], eax
-
-    ;mov byte [rbp + socket.buf + rax], 0
-
-
-_loop:
+    lea rdx, [rbp + socket.buf]
+    mov byte [rdx + rax], 0
 
     mov edi, dword[rbp + pipefd.write] ;write
     lea rsi, [rbp + socket.buf]
@@ -183,13 +183,36 @@ _loop:
     add edx, 1
     mov rax, SYS_WRITE
     syscall
+    
+    ; 입력 받은 글자가 exit인지 확인하는 루틴
+    lea rdi, [rbp + socket.buf]
+    lea rsi, [rel $+exitMessage-$]
+    mov rcx, 4 ; 4글자
+    repe cmpsb
+    jne _loop ;결과가 같지 않으면 다시 반복
+    ; 같다면 종료
+    ; 소켓 닫고
+    ; 파이프 닫고 종료
+    mov edi, dword[rbp + pipefd.write] ; pipefd.read
+    mov rax, SYS_CLOSE
+    syscall
+    cmp rax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + socket.sockfd] ; 
+    mov rax, SYS_CLOSE
+    syscall
+    cmp rax, 0
+    jne _closeFailed
+
+    mov edi, dword[rbp + socket.newfd] ; 
+    mov rax, SYS_CLOSE
+    syscall
+    cmp rax, 0
+    jne _closeFailed
 
 
     
-
-
-
-
 
     ;mov rax, 1
     ;mov rdi, 1
@@ -227,7 +250,7 @@ _socket:
     je _sockFailed
     ret
 
-_setsockopt:
+_setsockopt_reuse:
     ;                   $rdi       $rsi         $rdx
     ;int setsockopt(int sockfd, int level, int optname,
     ;                               $rcx            $r8
@@ -242,7 +265,6 @@ _setsockopt:
     cmp rax, 0
     jne _setsockoptFailed
     ret
-
 
 _bind:
     ;               $rdi                        $rsi
@@ -295,8 +317,8 @@ _recvfrom:
     mov r9, 0
     mov rax, SYS_RECVFROM
     syscall
-    cmp rax, -1
-    jle _recvfromFailed
+    ;cmp rax, -1
+    ;jle _recvfromFailed
     ret
 
 
