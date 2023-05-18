@@ -37,6 +37,8 @@ sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 sock.connect((host, port)) # 서버와 연결
 
+print("Connect to {}: {}".format(host, port))
+
 t1 = threading.Thread(target=send, args=(sock,), daemon=True)
 t1.start()
 
