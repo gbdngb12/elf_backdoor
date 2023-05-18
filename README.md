@@ -26,3 +26,10 @@ The victim uses the original program without problems and Attackers use backdoor
 
 ### backdoor_client
 ![client](https://github.com/gbdngb12/Simple-elf-backdoor/assets/104804087/29cf4cf6-bf88-456f-8cc2-052c8ae33f0c)
+
+## Tips
+### How to use sudo
+```bash
+$ python3 tcpClient
+echo "password" | sudo -S <command>
+```
