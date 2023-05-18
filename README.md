@@ -2,7 +2,7 @@
 
 It is an elf backdoor written in pure assembly language.
 
-## Attacker
+## Usage
 ### backdoor
 ```bash
 $ gcc elfinject.c -o elfinject -lelf
