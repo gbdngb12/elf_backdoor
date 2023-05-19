@@ -4,6 +4,9 @@ It is elf backdoor written in pure assembly language that works in **x86_64**
 
 # Usage
 ## Attacker
+First, in the backdoor/backdoor.s file,
+
+you need to modify the statement `push 0x4049a0 ; jump to entrypoint` **to the original entry point of the target binary.**
 ### backdoor
 ```bash
 $ gcc elfinject.c -o elfinject -lelf
