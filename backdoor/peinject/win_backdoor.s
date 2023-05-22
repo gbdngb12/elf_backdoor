@@ -1,0 +1,14 @@
+push r15 ;0x4157
+push r14 ;0x4156
+push r13 ;0x4155
+
+...
+
+pop r13 ;0x415d
+pop r14 ;0x415e
+pop r15 ;0x415f
+
+push 0x023f40; jump to original entry point
+; 0x68403f0200
+
+ret;0xc3

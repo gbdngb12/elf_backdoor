@@ -1,0 +1,46 @@
+.pdata
+0x03 30 00 ~ 0x03 30 00 + 0x10ec(VirtualSize) = 0x340ec
+
+.didat
+0x03 50 00 ~ 0x03 50 00 + 0x178(VirtualSize) = 0x35178
+
+.rsrc
+0x36000 ~ 0x36000 + 0xbd8(VirtualSize) = 0x36bd8
+
+.reloc
+0x37000 ~ 0x37000 + 0x2d4(VirtualSize) = 0x372d4
+
+다른곳에서 참조할때 모든 Va가 다 틀어지므로 안되는듯
+
+섹션삽입기법 다시한번 구현해보자
+
+.pdata
+0x03 30 00 ~ 0x03 30 00 + 0x10ec(VirtualSize) = 0x340ec
+
+.didat
+0x03 50 00 ~ 0x03 50 00 + 0x178(VirtualSize) = 0x35178
+
+.rsrc
+0x36000 ~ 0x36000 + 0xbd8(VirtualSize) = 0x36bd8
+
+.reloc
+0x37000 ~ 0x37000 + 0x2d4(VirtualSize) = 0x372d4
+
+.injec
+0x03 80 00 ~ 0x38000 + 0x2d4(VirtualSize) = 0x382d4
+0x 00 03 12 00
+
+0  1  2  3  4  5  6  7
+.  i  n  j  e  c  0  0
+d4 02 00 00 00 80 03 00
+04 00 00 00 00 03 12 00
+00 00 00 00 00 00 00 00
+00 00 00 00 20 00 00 60
+ 
+
+: 최종 크기 0x39000
+전체 주소도 수정하고, NumberOfSection값도 수정
+
+SizeOfImage값을 수정하자
+현재 값 : 0x03 80 00
+수정 값 : 0x03 90 00
